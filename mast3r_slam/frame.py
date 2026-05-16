@@ -30,6 +30,27 @@ class Frame:
     N_updates: int = 0
     K: Optional[torch.Tensor] = None
 
+    def to(self, device):
+        T_WC = lietorch.Sim3(self.T_WC.data.to(device))
+        frame = Frame(
+            self.frame_id,
+            self.img.to(device),
+            self.img_shape.to(device),
+            self.img_true_shape.to(device),
+            self.uimg,
+            T_WC,
+        )
+        frame.X_canon = None if self.X_canon is None else self.X_canon.to(device)
+        frame.C = None if self.C is None else self.C.to(device)
+        frame.feat = None if self.feat is None else self.feat.to(device)
+        frame.pos = None if self.pos is None else self.pos.to(device)
+        frame.N = self.N
+        frame.N_updates = self.N_updates
+        frame.K = None if self.K is None else self.K.to(device)
+        if hasattr(self, "score"):
+            frame.score = self.score
+        return frame
+
     def get_score(self, C):
         filtering_score = config["tracking"]["filtering_score"]
         if filtering_score == "median":
@@ -114,6 +135,7 @@ def create_frame(i, img, T_WC, img_size=512, device="cuda:0"):
     img_shape = torch.tensor(img["true_shape"], device=device)
     img_true_shape = img_shape.clone()
     uimg = torch.from_numpy(img["unnormalized_img"]) / 255.0
+    T_WC = lietorch.Sim3(T_WC.data.to(device))
     downsample = config["dataset"]["img_downsample"]
     if downsample > 1:
         uimg = uimg[::downsample, ::downsample]
@@ -127,6 +149,7 @@ class SharedStates:
         self.h, self.w = h, w
         self.dtype = dtype
         self.device = device
+        self.storage_device = "cpu" if str(device).startswith("mps") else device
 
         self.lock = manager.RLock()
         self.paused = manager.Value("i", 0)
@@ -141,16 +164,16 @@ class SharedStates:
 
         # fmt:off
         # shared state for the current frame (used for reloc/visualization)
-        self.dataset_idx = torch.zeros(1, device=device, dtype=torch.int).share_memory_()
-        self.img = torch.zeros(3, h, w, device=device, dtype=dtype).share_memory_()
+        self.dataset_idx = torch.zeros(1, device=self.storage_device, dtype=torch.int).share_memory_()
+        self.img = torch.zeros(3, h, w, device=self.storage_device, dtype=dtype).share_memory_()
         self.uimg = torch.zeros(h, w, 3, device="cpu", dtype=dtype).share_memory_()
-        self.img_shape = torch.zeros(1, 2, device=device, dtype=torch.int).share_memory_()
-        self.img_true_shape = torch.zeros(1, 2, device=device, dtype=torch.int).share_memory_()
-        self.T_WC = lietorch.Sim3.Identity(1, device=device, dtype=dtype).data.share_memory_()
-        self.X = torch.zeros(h * w, 3, device=device, dtype=dtype).share_memory_()
-        self.C = torch.zeros(h * w, 1, device=device, dtype=dtype).share_memory_()
-        self.feat = torch.zeros(1, self.num_patches, self.feat_dim, device=device, dtype=dtype).share_memory_()
-        self.pos = torch.zeros(1, self.num_patches, 2, device=device, dtype=torch.long).share_memory_()
+        self.img_shape = torch.zeros(1, 2, device=self.storage_device, dtype=torch.int).share_memory_()
+        self.img_true_shape = torch.zeros(1, 2, device=self.storage_device, dtype=torch.int).share_memory_()
+        self.T_WC = lietorch.Sim3.Identity(1, device=self.storage_device, dtype=dtype).data.share_memory_()
+        self.X = torch.zeros(h * w, 3, device=self.storage_device, dtype=dtype).share_memory_()
+        self.C = torch.zeros(h * w, 1, device=self.storage_device, dtype=dtype).share_memory_()
+        self.feat = torch.zeros(1, self.num_patches, self.feat_dim, device=self.storage_device, dtype=dtype).share_memory_()
+        self.pos = torch.zeros(1, self.num_patches, 2, device=self.storage_device, dtype=torch.long).share_memory_()
         # fmt: on
 
     def set_frame(self, frame):
@@ -226,25 +249,26 @@ class SharedKeyframes:
         self.buffer = buffer
         self.dtype = dtype
         self.device = device
+        self.storage_device = "cpu" if str(device).startswith("mps") else device
 
         self.feat_dim = 1024
         self.num_patches = h * w // (16 * 16)
 
         # fmt:off
-        self.dataset_idx = torch.zeros(buffer, device=device, dtype=torch.int).share_memory_()
-        self.img = torch.zeros(buffer, 3, h, w, device=device, dtype=dtype).share_memory_()
+        self.dataset_idx = torch.zeros(buffer, device=self.storage_device, dtype=torch.int).share_memory_()
+        self.img = torch.zeros(buffer, 3, h, w, device=self.storage_device, dtype=dtype).share_memory_()
         self.uimg = torch.zeros(buffer, h, w, 3, device="cpu", dtype=dtype).share_memory_()
-        self.img_shape = torch.zeros(buffer, 1, 2, device=device, dtype=torch.int).share_memory_()
-        self.img_true_shape = torch.zeros(buffer, 1, 2, device=device, dtype=torch.int).share_memory_()
-        self.T_WC = torch.zeros(buffer, 1, lietorch.Sim3.embedded_dim, device=device, dtype=dtype).share_memory_()
-        self.X = torch.zeros(buffer, h * w, 3, device=device, dtype=dtype).share_memory_()
-        self.C = torch.zeros(buffer, h * w, 1, device=device, dtype=dtype).share_memory_()
-        self.N = torch.zeros(buffer, device=device, dtype=torch.int).share_memory_()
-        self.N_updates = torch.zeros(buffer, device=device, dtype=torch.int).share_memory_()
-        self.feat = torch.zeros(buffer, 1, self.num_patches, self.feat_dim, device=device, dtype=dtype).share_memory_()
-        self.pos = torch.zeros(buffer, 1, self.num_patches, 2, device=device, dtype=torch.long).share_memory_()
-        self.is_dirty = torch.zeros(buffer, 1, device=device, dtype=torch.bool).share_memory_()
-        self.K = torch.zeros(3, 3, device=device, dtype=dtype).share_memory_()
+        self.img_shape = torch.zeros(buffer, 1, 2, device=self.storage_device, dtype=torch.int).share_memory_()
+        self.img_true_shape = torch.zeros(buffer, 1, 2, device=self.storage_device, dtype=torch.int).share_memory_()
+        self.T_WC = torch.zeros(buffer, 1, lietorch.Sim3.embedded_dim, device=self.storage_device, dtype=dtype).share_memory_()
+        self.X = torch.zeros(buffer, h * w, 3, device=self.storage_device, dtype=dtype).share_memory_()
+        self.C = torch.zeros(buffer, h * w, 1, device=self.storage_device, dtype=dtype).share_memory_()
+        self.N = torch.zeros(buffer, device=self.storage_device, dtype=torch.int).share_memory_()
+        self.N_updates = torch.zeros(buffer, device=self.storage_device, dtype=torch.int).share_memory_()
+        self.feat = torch.zeros(buffer, 1, self.num_patches, self.feat_dim, device=self.storage_device, dtype=dtype).share_memory_()
+        self.pos = torch.zeros(buffer, 1, self.num_patches, 2, device=self.storage_device, dtype=torch.long).share_memory_()
+        self.is_dirty = torch.zeros(buffer, 1, device=self.storage_device, dtype=torch.bool).share_memory_()
+        self.K = torch.zeros(3, 3, device=self.storage_device, dtype=dtype).share_memory_()
         # fmt: on
 
     def __getitem__(self, idx) -> Frame:

@@ -28,8 +28,8 @@ class FactorGraph:
         self.K = K
 
     def add_factors(self, ii, jj, min_match_frac, is_reloc=False):
-        kf_ii = [self.frames[idx] for idx in ii]
-        kf_jj = [self.frames[idx] for idx in jj]
+        kf_ii = [self.frames[idx].to(self.device) for idx in ii]
+        kf_jj = [self.frames[idx].to(self.device) for idx in jj]
         feat_i = torch.cat([kf_i.feat for kf_i in kf_ii])
         feat_j = torch.cat([kf_j.feat for kf_j in kf_jj])
         pos_i = torch.cat([kf_i.pos for kf_i in kf_ii])
@@ -110,7 +110,7 @@ class FactorGraph:
         return ii, jj, idx_ii2jj, valid_match, Q_ii2jj
 
     def get_poses_points(self, unique_kf_idx):
-        kfs = [self.frames[idx] for idx in unique_kf_idx]
+        kfs = [self.frames[idx].to(self.device) for idx in unique_kf_idx]
         Xs = torch.stack([kf.X_canon for kf in kfs])
         T_WCs = lietorch.Sim3(torch.stack([kf.T_WC.data for kf in kfs]))
 

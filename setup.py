@@ -2,11 +2,12 @@ from pathlib import Path
 from setuptools import setup
 
 import torch
-from torch.utils.cpp_extension import BuildExtension, CppExtension
+from torch.utils.cpp_extension import BuildExtension
 import os
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 has_cuda = torch.cuda.is_available()
+ext_modules = []
 
 include_dirs = [
     os.path.join(ROOT, "mast3r_slam/backend/include"),
@@ -44,7 +45,7 @@ if has_cuda:
         )
     ]
 else:
-    print("CUDA not found, cannot compile backend!")
+    print("CUDA not found, skipping CUDA backend build")
 
 setup(
     ext_modules=ext_modules,

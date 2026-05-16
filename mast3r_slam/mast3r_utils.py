@@ -34,7 +34,7 @@ def load_retriever(mast3r_model, retriever_path=None, device="cuda"):
 @torch.inference_mode
 def decoder(model, feat1, feat2, pos1, pos2, shape1, shape2):
     dec1, dec2 = model._decoder(feat1, pos1, feat2, pos2)
-    with torch.amp.autocast(enabled=False, device_type="cuda"):
+    with torch.amp.autocast(enabled=False, device_type=feat1.device.type):
         res1 = model._downstream_head(1, [tok.float() for tok in dec1], shape1)
         res2 = model._downstream_head(2, [tok.float() for tok in dec2], shape2)
     return res1, res2

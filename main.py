@@ -25,6 +25,14 @@ from mast3r_slam.visualization import WindowMsg, run_visualization
 import torch.multiprocessing as mp
 
 
+def select_device():
+    if torch.backends.mps.is_available():
+        return "mps"
+    if torch.cuda.is_available():
+        return "cuda:0"
+    return "cpu"
+
+
 def relocalization(frame, keyframes, factor_graph, retrieval_database):
     # we are adding and then removing from the keyframe, so we need to be careful.
     # The lock slows viz down but safer this way...
@@ -76,7 +84,7 @@ def run_backend(cfg, model, states, keyframes, K):
 
     device = keyframes.device
     factor_graph = FactorGraph(model, keyframes, K, device)
-    retrieval_database = load_retriever(model)
+    retrieval_database = load_retriever(model, device=device)
 
     mode = states.get_mode()
     while mode is not Mode.TERMINATED:
@@ -85,7 +93,7 @@ def run_backend(cfg, model, states, keyframes, K):
             time.sleep(0.01)
             continue
         if mode == Mode.RELOC:
-            frame = states.get_frame()
+            frame = states.get_frame().to(device)
             success = relocalization(frame, keyframes, factor_graph, retrieval_database)
             if success:
                 states.set_mode(Mode.TRACKING)
@@ -144,9 +152,10 @@ def run_backend(cfg, model, states, keyframes, K):
 
 if __name__ == "__main__":
     mp.set_start_method("spawn")
-    torch.backends.cuda.matmul.allow_tf32 = True
+    if torch.cuda.is_available():
+        torch.backends.cuda.matmul.allow_tf32 = True
     torch.set_grad_enabled(False)
-    device = "cuda:0"
+    device = select_device()
     save_frames = False
     datetime_now = str(datetime.datetime.now()).replace(" ", "_")
 
@@ -183,8 +192,9 @@ if __name__ == "__main__":
             intrinsics["calibration"],
         )
 
-    keyframes = SharedKeyframes(manager, h, w)
-    states = SharedStates(manager, h, w)
+    keyframes = SharedKeyframes(manager, h, w, device=device)
+    states = SharedStates(manager, h, w, device=device)
+    use_backend = not device.startswith("mps")
 
     if not args.no_viz:
         viz = mp.Process(
@@ -194,7 +204,8 @@ if __name__ == "__main__":
         viz.start()
 
     model = load_mast3r(device=device)
-    model.share_memory()
+    if not device.startswith("mps"):
+        model.share_memory()
 
     has_calib = dataset.has_calib()
     use_calib = config["use_calib"]
@@ -222,8 +233,12 @@ if __name__ == "__main__":
     tracker = FrameTracker(model, keyframes, device)
     last_msg = WindowMsg()
 
-    backend = mp.Process(target=run_backend, args=(config, model, states, keyframes, K))
-    backend.start()
+    backend = None
+    if use_backend:
+        backend = mp.Process(
+            target=run_backend, args=(config, model, states, keyframes, K)
+        )
+        backend.start()
 
     i = 0
     fps_timer = time.time()
@@ -258,7 +273,7 @@ if __name__ == "__main__":
         T_WC = (
             lietorch.Sim3.Identity(1, device=device)
             if i == 0
-            else states.get_frame().T_WC
+            else states.get_frame().to(device).T_WC
         )
         frame = create_frame(i, img, T_WC, img_size=dataset.img_size, device=device)
 
@@ -267,7 +282,8 @@ if __name__ == "__main__":
             X_init, C_init = mast3r_inference_mono(model, frame)
             frame.update_pointmap(X_init, C_init)
             keyframes.append(frame)
-            states.queue_global_optimization(len(keyframes) - 1)
+            if use_backend:
+                states.queue_global_optimization(len(keyframes) - 1)
             states.set_mode(Mode.TRACKING)
             states.set_frame(frame)
             i += 1
@@ -275,7 +291,7 @@ if __name__ == "__main__":
 
         if mode == Mode.TRACKING:
             add_new_kf, match_info, try_reloc = tracker.track(frame)
-            if try_reloc:
+            if try_reloc and use_backend:
                 states.set_mode(Mode.RELOC)
             states.set_frame(frame)
 
@@ -296,7 +312,8 @@ if __name__ == "__main__":
 
         if add_new_kf:
             keyframes.append(frame)
-            states.queue_global_optimization(len(keyframes) - 1)
+            if use_backend:
+                states.queue_global_optimization(len(keyframes) - 1)
             # In single threaded mode, wait for the backend to finish
             while config["single_thread"]:
                 with states.lock:
@@ -330,6 +347,7 @@ if __name__ == "__main__":
             cv2.imwrite(f"{savedir}/{i}.png", frame)
 
     print("done")
-    backend.join()
+    if backend is not None:
+        backend.join()
     if not args.no_viz:
         viz.join()
