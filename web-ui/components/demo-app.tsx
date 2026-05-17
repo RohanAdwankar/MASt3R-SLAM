@@ -14,7 +14,10 @@ type SceneResult = {
   pointCount: number;
 };
 
+type CameraSource = "laptop" | "drone";
+
 const CAPTURE_INTERVAL_MS = 350;
+const LIVE_REBUILD_FRAME_STEP = 4;
 
 function captureFrame(video: HTMLVideoElement) {
   const canvas = document.createElement("canvas");
@@ -41,10 +44,19 @@ export function DemoApp() {
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<number | null>(null);
   const framesRef = useRef<RecordingFrame[]>([]);
+  const recordingRef = useRef(false);
+  const liveBusyRef = useRef(false);
+  const capturingRef = useRef(false);
+  const lastLiveBuildFrameRef = useRef(0);
+  const dronePreviewUrlRef = useRef<string | null>(null);
 
   const [frames, setFrames] = useState<RecordingFrame[]>([]);
   const [recording, setRecording] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [liveBusy, setLiveBusy] = useState(false);
+  const [liveBuild, setLiveBuild] = useState(true);
+  const [cameraSource, setCameraSource] = useState<CameraSource>("laptop");
+  const [dronePreviewUrl, setDronePreviewUrl] = useState<string | null>(null);
   const [status, setStatus] = useState("Camera idle");
   const [scene, setScene] = useState<SceneResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +73,9 @@ export function DemoApp() {
       }
       for (const frame of framesRef.current) {
         URL.revokeObjectURL(frame.url);
+      }
+      if (dronePreviewUrlRef.current) {
+        URL.revokeObjectURL(dronePreviewUrlRef.current);
       }
     };
   }, []);
@@ -85,6 +100,23 @@ export function DemoApp() {
     return stream;
   }
 
+  async function captureDroneFrame() {
+    const response = await fetch("/api/drone/frame", { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    dronePreviewUrlRef.current = url;
+    setDronePreviewUrl((previous) => {
+      if (previous) {
+        URL.revokeObjectURL(previous);
+      }
+      return url;
+    });
+    return { blob, url };
+  }
+
   function resetFrames() {
     for (const frame of framesRef.current) {
       URL.revokeObjectURL(frame.url);
@@ -93,25 +125,90 @@ export function DemoApp() {
     setFrames([]);
   }
 
+  function stopLaptopCamera() {
+    if (!streamRef.current) {
+      return;
+    }
+    for (const track of streamRef.current.getTracks()) {
+      track.stop();
+    }
+    streamRef.current = null;
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  }
+
+  function appendFrame(frame: RecordingFrame) {
+    framesRef.current = [...framesRef.current, frame].slice(-16);
+    setFrames(framesRef.current);
+    maybeLiveReconstruct();
+  }
+
+  function maybeLiveReconstruct() {
+    if (!liveBuild || liveBusyRef.current || framesRef.current.length < 2) {
+      return;
+    }
+    if (framesRef.current.length - lastLiveBuildFrameRef.current < LIVE_REBUILD_FRAME_STEP) {
+      return;
+    }
+
+    const snapshot = [...framesRef.current];
+    lastLiveBuildFrameRef.current = snapshot.length;
+    liveBusyRef.current = true;
+    setLiveBusy(true);
+    setStatus(`Rebuilding from ${snapshot.length} frames`);
+    reconstructFrames(snapshot)
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : "Live reconstruction failed");
+        setStatus("Live reconstruction failed");
+      })
+      .finally(() => {
+        liveBusyRef.current = false;
+        setLiveBusy(false);
+        if (recordingRef.current) {
+          setStatus("Recording frames");
+        }
+      });
+  }
+
   async function startRecording() {
     try {
       setError(null);
       setScene(null);
-      setStatus("Requesting camera");
-      await ensureCamera();
+      lastLiveBuildFrameRef.current = 0;
+      setStatus(cameraSource === "drone" ? "Connecting to drone" : "Requesting camera");
+      if (cameraSource === "laptop") {
+        await ensureCamera();
+      } else {
+        stopLaptopCamera();
+      }
       resetFrames();
       setRecording(true);
+      recordingRef.current = true;
       setStatus("Recording frames");
 
       timerRef.current = window.setInterval(async () => {
-        const video = videoRef.current;
-        if (!video || video.readyState < 2) {
+        if (capturingRef.current) {
           return;
         }
-        const blob = await captureFrame(video);
-        const frame = { blob, url: URL.createObjectURL(blob) };
-        framesRef.current = [...framesRef.current, frame].slice(-16);
-        setFrames(framesRef.current);
+        capturingRef.current = true;
+        try {
+          if (cameraSource === "drone") {
+            appendFrame(await captureDroneFrame());
+          } else {
+            const video = videoRef.current;
+            if (!video || video.readyState < 2) {
+              return;
+            }
+            const blob = await captureFrame(video);
+            appendFrame({ blob, url: URL.createObjectURL(blob) });
+          }
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to capture frame");
+          setStatus("Frame capture failed");
+        } finally {
+          capturingRef.current = false;
+        }
       }, CAPTURE_INTERVAL_MS);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to access camera");
@@ -125,7 +222,28 @@ export function DemoApp() {
       timerRef.current = null;
     }
     setRecording(false);
+    recordingRef.current = false;
     setStatus(`Captured ${framesRef.current.length} frames`);
+  }
+
+  async function reconstructFrames(inputFrames: RecordingFrame[]) {
+    const data = new FormData();
+    for (const [index, frame] of inputFrames.entries()) {
+      data.append("frames", frame.blob, `${String(index).padStart(6, "0")}.png`);
+    }
+
+    const response = await fetch("/api/reconstruct", {
+      method: "POST",
+      body: data,
+    });
+
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+
+    const result = (await response.json()) as SceneResult;
+    setScene(result);
+    setStatus(`Reconstruction ready with ${result.pointCount.toLocaleString()} points`);
   }
 
   async function reconstruct() {
@@ -138,23 +256,7 @@ export function DemoApp() {
     setStatus("Running reconstruction");
 
     try {
-      const data = new FormData();
-      for (const [index, frame] of framesRef.current.entries()) {
-        data.append("frames", frame.blob, `${String(index).padStart(6, "0")}.png`);
-      }
-
-      const response = await fetch("/api/reconstruct", {
-        method: "POST",
-        body: data,
-      });
-
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
-
-      const result = (await response.json()) as SceneResult;
-      setScene(result);
-      setStatus(`Reconstruction ready with ${result.pointCount.toLocaleString()} points`);
+      await reconstructFrames([...framesRef.current]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Reconstruction failed");
       setStatus("Reconstruction failed");
@@ -176,14 +278,22 @@ export function DemoApp() {
         <div className="stack">
           <div className="panel stack">
             <div className="video-frame">
-              <video ref={videoRef} muted playsInline />
+              {cameraSource === "drone" ? (
+                dronePreviewUrl ? (
+                  <img src={dronePreviewUrl} alt="Drone camera preview" />
+                ) : (
+                  <div className="video-placeholder">drone camera waiting</div>
+                )
+              ) : (
+                <video ref={videoRef} muted playsInline />
+              )}
             </div>
             <div className="status-strip">
               <span>
                 <span className={`dot ${recording ? "live" : ""}`} />
                 {status}
               </span>
-              <span>{frames.length} frames</span>
+              <span>{liveBusy ? "building" : `${frames.length} frames`}</span>
             </div>
             <div className="actions">
               <button
@@ -196,10 +306,43 @@ export function DemoApp() {
               <button
                 className="accent"
                 onClick={reconstruct}
-                disabled={recording || busy || frames.length < 2}
+                disabled={busy || liveBusy || frames.length < 2}
               >
                 {busy ? "Reconstructing" : "Build scene"}
               </button>
+            </div>
+            <div className="source-row">
+              <div className="segmented" aria-label="Camera source">
+                <button
+                  className={cameraSource === "laptop" ? "selected" : ""}
+                  disabled={recording}
+                  onClick={() => {
+                    setCameraSource("laptop");
+                    setStatus("Camera idle");
+                  }}
+                >
+                  Laptop camera
+                </button>
+                <button
+                  className={cameraSource === "drone" ? "selected" : ""}
+                  disabled={recording}
+                  onClick={() => {
+                    setCameraSource("drone");
+                    stopLaptopCamera();
+                    setStatus("Drone camera idle");
+                  }}
+                >
+                  Drone camera
+                </button>
+              </div>
+              <label className="check-row">
+                <input
+                  type="checkbox"
+                  checked={liveBuild}
+                  onChange={(event) => setLiveBuild(event.target.checked)}
+                />
+                Live build
+              </label>
             </div>
           </div>
 

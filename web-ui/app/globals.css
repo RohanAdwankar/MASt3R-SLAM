@@ -102,11 +102,21 @@ button:disabled {
   background: #171717;
 }
 
-.video-frame video {
+.video-frame video,
+.video-frame img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+.video-placeholder {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.92rem;
 }
 
 .status-strip {
@@ -145,6 +155,39 @@ button:disabled {
 .actions .accent {
   background: var(--accent);
   color: var(--panel);
+}
+
+.source-row {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.segmented button {
+  border-color: rgba(16, 16, 16, 0.24);
+  background: transparent;
+  padding: 0.65rem 0.75rem;
+}
+
+.segmented button + button {
+  border-left: 0;
+}
+
+.segmented .selected {
+  background: var(--ink);
+  color: var(--panel);
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--muted);
+  font-size: 0.92rem;
 }
 
 .preview-grid {
