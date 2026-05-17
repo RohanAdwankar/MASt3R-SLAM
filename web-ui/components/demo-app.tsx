@@ -19,8 +19,8 @@ type FlipAxis = "none" | "x" | "y" | "z";
 
 const CAPTURE_INTERVAL_MS = 350;
 const DEFAULT_RECENT_FRAME_LIMIT = "0";
-const DEFAULT_BUILD_INTERVAL_SECONDS = "10";
-const DEFAULT_BASE_BUILD_FRAMES = "10";
+const DEFAULT_BUILD_INTERVAL_SECONDS = "5";
+const DEFAULT_BUILD_FRAMES_PER_SECOND = "2";
 const DEFAULT_MAX_BUILD_GROWTH = "3";
 
 function captureFrame(video: HTMLVideoElement) {
@@ -57,7 +57,7 @@ export function DemoApp() {
   const liveSettingsRef = useRef({
     liveBuild: true,
     buildIntervalSeconds: DEFAULT_BUILD_INTERVAL_SECONDS,
-    baseBuildFrames: DEFAULT_BASE_BUILD_FRAMES,
+    buildFramesPerSecond: DEFAULT_BUILD_FRAMES_PER_SECOND,
     maxBuildGrowth: DEFAULT_MAX_BUILD_GROWTH,
   });
 
@@ -72,7 +72,9 @@ export function DemoApp() {
   const [buildIntervalSeconds, setBuildIntervalSeconds] = useState(
     DEFAULT_BUILD_INTERVAL_SECONDS,
   );
-  const [baseBuildFrames, setBaseBuildFrames] = useState(DEFAULT_BASE_BUILD_FRAMES);
+  const [buildFramesPerSecond, setBuildFramesPerSecond] = useState(
+    DEFAULT_BUILD_FRAMES_PER_SECOND,
+  );
   const [maxBuildGrowth, setMaxBuildGrowth] = useState(DEFAULT_MAX_BUILD_GROWTH);
   const [dronePreviewUrl, setDronePreviewUrl] = useState<string | null>(null);
   const [status, setStatus] = useState("Camera idle");
@@ -82,7 +84,7 @@ export function DemoApp() {
   liveSettingsRef.current = {
     liveBuild,
     buildIntervalSeconds,
-    baseBuildFrames,
+    buildFramesPerSecond,
     maxBuildGrowth,
   };
 
@@ -185,7 +187,8 @@ export function DemoApp() {
   function liveBuildFrameBudget(elapsedSeconds: number) {
     const settings = liveSettingsRef.current;
     const intervalSeconds = numericSetting(settings.buildIntervalSeconds, 10);
-    const baseFrames = Math.max(2, Math.round(numericSetting(settings.baseBuildFrames, 10)));
+    const framesPerSecond = numericSetting(settings.buildFramesPerSecond, 2);
+    const baseFrames = Math.max(2, Math.round(intervalSeconds * framesPerSecond));
     const maxGrowth = Math.max(1, numericSetting(settings.maxBuildGrowth, 3));
     const elapsedIntervals = Math.max(1, elapsedSeconds / intervalSeconds);
     const growth = Math.min(maxGrowth, 1 + Math.log2(elapsedIntervals));
@@ -442,7 +445,7 @@ export function DemoApp() {
               </label>
               <div className="settings-grid">
                 <label>
-                  <span>Build interval</span>
+                  <span>Build seconds</span>
                   <input
                     type="number"
                     min="1"
@@ -453,18 +456,18 @@ export function DemoApp() {
                   />
                 </label>
                 <label>
-                  <span>Base frames</span>
+                  <span>Frames/sec</span>
                   <input
                     type="number"
-                    min="2"
-                    step="1"
-                    inputMode="numeric"
-                    value={baseBuildFrames}
-                    onChange={(event) => setBaseBuildFrames(event.target.value)}
+                    min="0.25"
+                    step="0.25"
+                    inputMode="decimal"
+                    value={buildFramesPerSecond}
+                    onChange={(event) => setBuildFramesPerSecond(event.target.value)}
                   />
                 </label>
                 <label>
-                  <span>Max growth</span>
+                  <span>Growth cap</span>
                   <input
                     type="number"
                     min="1"
