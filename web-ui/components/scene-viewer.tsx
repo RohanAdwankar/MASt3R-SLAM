@@ -27,6 +27,11 @@ export function SceneViewer({ scene }: { scene: SceneResult | null }) {
       setWebglError(true);
       return;
     }
+    const rendererName = gl.getParameter(gl.RENDERER);
+    if (typeof rendererName === "string" && rendererName === "Disabled") {
+      setWebglError(true);
+      return;
+    }
 
     let renderer: THREE.WebGLRenderer;
     try {
