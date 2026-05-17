@@ -18,6 +18,7 @@ type CameraSource = "laptop" | "drone";
 
 const CAPTURE_INTERVAL_MS = 350;
 const LIVE_REBUILD_FRAME_STEP = 4;
+const DEFAULT_RECENT_FRAME_LIMIT = "0";
 
 function captureFrame(video: HTMLVideoElement) {
   const canvas = document.createElement("canvas");
@@ -56,6 +57,7 @@ export function DemoApp() {
   const [liveBusy, setLiveBusy] = useState(false);
   const [liveBuild, setLiveBuild] = useState(true);
   const [cameraSource, setCameraSource] = useState<CameraSource>("laptop");
+  const [recentFrameLimit, setRecentFrameLimit] = useState(DEFAULT_RECENT_FRAME_LIMIT);
   const [dronePreviewUrl, setDronePreviewUrl] = useState<string | null>(null);
   const [status, setStatus] = useState("Camera idle");
   const [scene, setScene] = useState<SceneResult | null>(null);
@@ -139,8 +141,16 @@ export function DemoApp() {
   }
 
   function appendFrame(frame: RecordingFrame) {
-    framesRef.current = [...framesRef.current, frame].slice(-16);
-    setFrames(framesRef.current);
+    const parsedLimit = Number.parseInt(recentFrameLimit, 10);
+    const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 0;
+    const nextFrames = [...framesRef.current, frame];
+    const keptFrames = limit > 0 ? nextFrames.slice(-limit) : nextFrames;
+    const droppedFrames = nextFrames.slice(0, nextFrames.length - keptFrames.length);
+    for (const droppedFrame of droppedFrames) {
+      URL.revokeObjectURL(droppedFrame.url);
+    }
+    framesRef.current = keptFrames;
+    setFrames(keptFrames);
     maybeLiveReconstruct();
   }
 
@@ -342,6 +352,18 @@ export function DemoApp() {
                   onChange={(event) => setLiveBuild(event.target.checked)}
                 />
                 Live build
+              </label>
+              <label className="number-row">
+                <span>Recent frames</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  inputMode="numeric"
+                  value={recentFrameLimit}
+                  onChange={(event) => setRecentFrameLimit(event.target.value)}
+                  placeholder="0"
+                />
               </label>
             </div>
           </div>

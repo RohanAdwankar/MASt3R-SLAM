@@ -182,12 +182,25 @@ button:disabled {
   color: var(--panel);
 }
 
-.check-row {
+.check-row,
+.number-row {
   display: flex;
   align-items: center;
   gap: 0.55rem;
   color: var(--muted);
   font-size: 0.92rem;
+}
+
+.number-row {
+  justify-content: space-between;
+}
+
+.number-row input {
+  width: 5.5rem;
+  border: 1px solid rgba(16, 16, 16, 0.24);
+  background: rgba(255, 255, 255, 0.52);
+  color: var(--ink);
+  padding: 0.45rem 0.55rem;
 }
 
 .preview-grid {
