@@ -20,17 +20,13 @@ const CAPTURE_INTERVAL_MS = 350;
 const LIVE_REBUILD_FRAME_STEP = 4;
 const DEFAULT_RECENT_FRAME_LIMIT = "0";
 
-function captureFrame(video: HTMLVideoElement, flipped: boolean) {
+function captureFrame(video: HTMLVideoElement) {
   const canvas = document.createElement("canvas");
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
   const ctx = canvas.getContext("2d");
   if (!ctx) {
     throw new Error("Failed to create frame context");
-  }
-  if (flipped) {
-    ctx.translate(canvas.width, 0);
-    ctx.scale(-1, 1);
   }
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
   return new Promise<Blob>((resolve, reject) => {
@@ -61,7 +57,7 @@ export function DemoApp() {
   const [liveBusy, setLiveBusy] = useState(false);
   const [liveBuild, setLiveBuild] = useState(true);
   const [cameraSource, setCameraSource] = useState<CameraSource>("laptop");
-  const [flipCamera, setFlipCamera] = useState(true);
+  const [flipZAxis, setFlipZAxis] = useState(true);
   const [recentFrameLimit, setRecentFrameLimit] = useState(DEFAULT_RECENT_FRAME_LIMIT);
   const [dronePreviewUrl, setDronePreviewUrl] = useState<string | null>(null);
   const [status, setStatus] = useState("Camera idle");
@@ -215,7 +211,7 @@ export function DemoApp() {
             if (!video || video.readyState < 2) {
               return;
             }
-            const blob = await captureFrame(video, flipCamera);
+            const blob = await captureFrame(video);
             appendFrame({ blob, url: URL.createObjectURL(blob) });
           }
         } catch (err) {
@@ -295,21 +291,12 @@ export function DemoApp() {
             <div className="video-frame">
               {cameraSource === "drone" ? (
                 dronePreviewUrl ? (
-                  <img
-                    className={flipCamera ? "flipped" : ""}
-                    src={dronePreviewUrl}
-                    alt="Drone camera preview"
-                  />
+                  <img src={dronePreviewUrl} alt="Drone camera preview" />
                 ) : (
                   <div className="video-placeholder">drone camera waiting</div>
                 )
               ) : (
-                <video
-                  ref={videoRef}
-                  className={flipCamera ? "flipped" : ""}
-                  muted
-                  playsInline
-                />
+                <video ref={videoRef} muted playsInline />
               )}
             </div>
             <div className="status-strip">
@@ -342,7 +329,7 @@ export function DemoApp() {
                   disabled={recording}
                   onClick={() => {
                     setCameraSource("laptop");
-                    setFlipCamera(true);
+                    setFlipZAxis(true);
                     setStatus("Camera idle");
                   }}
                 >
@@ -353,7 +340,7 @@ export function DemoApp() {
                   disabled={recording}
                   onClick={() => {
                     setCameraSource("drone");
-                    setFlipCamera(false);
+                    setFlipZAxis(false);
                     stopLaptopCamera();
                     setStatus("Drone camera idle");
                   }}
@@ -372,10 +359,10 @@ export function DemoApp() {
               <label className="check-row">
                 <input
                   type="checkbox"
-                  checked={flipCamera}
-                  onChange={(event) => setFlipCamera(event.target.checked)}
+                  checked={flipZAxis}
+                  onChange={(event) => setFlipZAxis(event.target.checked)}
                 />
-                Flip camera
+                Flip z axis
               </label>
               <label className="number-row">
                 <span>Recent frames</span>
@@ -415,7 +402,7 @@ export function DemoApp() {
       </section>
 
       <section className="viewer-panel">
-        <SceneViewer scene={scene} />
+        <SceneViewer scene={scene} flipZAxis={flipZAxis} />
       </section>
     </main>
   );

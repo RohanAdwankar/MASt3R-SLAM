@@ -11,7 +11,13 @@ type SceneResult = {
   pointCount: number;
 };
 
-export function SceneViewer({ scene }: { scene: SceneResult | null }) {
+export function SceneViewer({
+  scene,
+  flipZAxis,
+}: {
+  scene: SceneResult | null;
+  flipZAxis: boolean;
+}) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [webglError, setWebglError] = useState(false);
 
@@ -84,6 +90,7 @@ export function SceneViewer({ scene }: { scene: SceneResult | null }) {
         });
 
         points = new THREE.Points(geometry, material);
+        points.scale.z = flipZAxis ? -1 : 1;
         scene3d.add(points);
 
         const radius = geometry.boundingSphere?.radius ?? 1;
@@ -124,7 +131,7 @@ export function SceneViewer({ scene }: { scene: SceneResult | null }) {
         (points.material as THREE.Material).dispose();
       }
     };
-  }, [scene]);
+  }, [scene, flipZAxis]);
 
   return (
     <div className="viewer-frame">
