@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { PLYLoader } from "three/examples/jsm/loaders/PLYLoader.js";
@@ -13,6 +13,7 @@ type SceneResult = {
 
 export function SceneViewer({ scene }: { scene: SceneResult | null }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const [webglError, setWebglError] = useState(false);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -20,7 +21,21 @@ export function SceneViewer({ scene }: { scene: SceneResult | null }) {
       return;
     }
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    const probe = document.createElement("canvas");
+    const gl = probe.getContext("webgl2") ?? probe.getContext("webgl");
+    if (!gl) {
+      setWebglError(true);
+      return;
+    }
+
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      setWebglError(false);
+    } catch {
+      setWebglError(true);
+      return;
+    }
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(host.clientWidth, host.clientHeight);
     host.innerHTML = "";
@@ -108,7 +123,15 @@ export function SceneViewer({ scene }: { scene: SceneResult | null }) {
 
   return (
     <div className="viewer-frame">
-      {!scene ? (
+      {webglError ? (
+        <div className="viewer-empty">
+          <div className="eyebrow">Scene output</div>
+          <h2 style={{ margin: "0.35rem 0 0.8rem" }}>3D viewer unavailable.</h2>
+          <p style={{ margin: 0 }}>
+            This browser cannot create a WebGL context. The scene will render in a browser with WebGL enabled.
+          </p>
+        </div>
+      ) : !scene ? (
         <div className="viewer-empty">
           <div className="eyebrow">Scene output</div>
           <h2 style={{ margin: "0.35rem 0 0.8rem" }}>No reconstruction yet.</h2>

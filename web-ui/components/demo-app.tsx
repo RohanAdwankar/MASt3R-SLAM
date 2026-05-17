@@ -167,7 +167,7 @@ export function DemoApp() {
     <main className="app-shell">
       <section className="control-panel">
         <div className="eyebrow">MASt3R-SLAM recorder</div>
-        <h1 className="headline">Record a room. inspect the point cloud.</h1>
+        <h1 className="headline">Record a room, inspect the point cloud.</h1>
         <p className="lede">
           Capture a short handheld sweep in the browser, run the reconstruction
           pipeline, then orbit the resulting 3D scene here.
