@@ -11,12 +11,14 @@ type SceneResult = {
   pointCount: number;
 };
 
+type FlipAxis = "none" | "x" | "y" | "z";
+
 export function SceneViewer({
   scene,
-  flipZAxis,
+  flipAxis,
 }: {
   scene: SceneResult | null;
-  flipZAxis: boolean;
+  flipAxis: FlipAxis;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [webglError, setWebglError] = useState(false);
@@ -90,7 +92,11 @@ export function SceneViewer({
         });
 
         points = new THREE.Points(geometry, material);
-        points.scale.z = flipZAxis ? -1 : 1;
+        points.scale.set(
+          flipAxis === "x" ? -1 : 1,
+          flipAxis === "y" ? -1 : 1,
+          flipAxis === "z" ? -1 : 1,
+        );
         scene3d.add(points);
 
         const radius = geometry.boundingSphere?.radius ?? 1;
@@ -131,7 +137,7 @@ export function SceneViewer({
         (points.material as THREE.Material).dispose();
       }
     };
-  }, [scene, flipZAxis]);
+  }, [scene, flipAxis]);
 
   return (
     <div className="viewer-frame">

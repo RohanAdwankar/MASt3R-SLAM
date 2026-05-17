@@ -15,10 +15,13 @@ type SceneResult = {
 };
 
 type CameraSource = "laptop" | "drone";
+type FlipAxis = "none" | "x" | "y" | "z";
 
 const CAPTURE_INTERVAL_MS = 350;
-const LIVE_REBUILD_FRAME_STEP = 4;
 const DEFAULT_RECENT_FRAME_LIMIT = "0";
+const DEFAULT_BUILD_INTERVAL_SECONDS = "10";
+const DEFAULT_BASE_BUILD_FRAMES = "10";
+const DEFAULT_MAX_BUILD_GROWTH = "3";
 
 function captureFrame(video: HTMLVideoElement) {
   const canvas = document.createElement("canvas");
@@ -48,8 +51,15 @@ export function DemoApp() {
   const recordingRef = useRef(false);
   const liveBusyRef = useRef(false);
   const capturingRef = useRef(false);
-  const lastLiveBuildFrameRef = useRef(0);
+  const recordingStartedAtRef = useRef(0);
+  const nextLiveBuildAtRef = useRef(0);
   const dronePreviewUrlRef = useRef<string | null>(null);
+  const liveSettingsRef = useRef({
+    liveBuild: true,
+    buildIntervalSeconds: DEFAULT_BUILD_INTERVAL_SECONDS,
+    baseBuildFrames: DEFAULT_BASE_BUILD_FRAMES,
+    maxBuildGrowth: DEFAULT_MAX_BUILD_GROWTH,
+  });
 
   const [frames, setFrames] = useState<RecordingFrame[]>([]);
   const [recording, setRecording] = useState(false);
@@ -57,12 +67,24 @@ export function DemoApp() {
   const [liveBusy, setLiveBusy] = useState(false);
   const [liveBuild, setLiveBuild] = useState(true);
   const [cameraSource, setCameraSource] = useState<CameraSource>("laptop");
-  const [flipZAxis, setFlipZAxis] = useState(true);
+  const [flipAxis, setFlipAxis] = useState<FlipAxis>("y");
   const [recentFrameLimit, setRecentFrameLimit] = useState(DEFAULT_RECENT_FRAME_LIMIT);
+  const [buildIntervalSeconds, setBuildIntervalSeconds] = useState(
+    DEFAULT_BUILD_INTERVAL_SECONDS,
+  );
+  const [baseBuildFrames, setBaseBuildFrames] = useState(DEFAULT_BASE_BUILD_FRAMES);
+  const [maxBuildGrowth, setMaxBuildGrowth] = useState(DEFAULT_MAX_BUILD_GROWTH);
   const [dronePreviewUrl, setDronePreviewUrl] = useState<string | null>(null);
   const [status, setStatus] = useState("Camera idle");
   const [scene, setScene] = useState<SceneResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  liveSettingsRef.current = {
+    liveBuild,
+    buildIntervalSeconds,
+    baseBuildFrames,
+    maxBuildGrowth,
+  };
 
   useEffect(() => {
     return () => {
@@ -155,19 +177,54 @@ export function DemoApp() {
     maybeLiveReconstruct();
   }
 
+  function numericSetting(value: string, fallback: number) {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  }
+
+  function liveBuildFrameBudget(elapsedSeconds: number) {
+    const settings = liveSettingsRef.current;
+    const intervalSeconds = numericSetting(settings.buildIntervalSeconds, 10);
+    const baseFrames = Math.max(2, Math.round(numericSetting(settings.baseBuildFrames, 10)));
+    const maxGrowth = Math.max(1, numericSetting(settings.maxBuildGrowth, 3));
+    const elapsedIntervals = Math.max(1, elapsedSeconds / intervalSeconds);
+    const growth = Math.min(maxGrowth, 1 + Math.log2(elapsedIntervals));
+    return Math.max(2, Math.round(baseFrames * growth));
+  }
+
+  function sampleRecentFrames(frameBudget: number) {
+    const sourceFrames = framesRef.current;
+    if (sourceFrames.length <= frameBudget) {
+      return [...sourceFrames];
+    }
+
+    const sampledFrames: RecordingFrame[] = [];
+    const maxIndex = sourceFrames.length - 1;
+    for (let index = 0; index < frameBudget; index += 1) {
+      const sourceIndex = Math.round((index * maxIndex) / (frameBudget - 1));
+      sampledFrames.push(sourceFrames[sourceIndex]);
+    }
+    return sampledFrames;
+  }
+
   function maybeLiveReconstruct() {
-    if (!liveBuild || liveBusyRef.current || framesRef.current.length < 2) {
+    const settings = liveSettingsRef.current;
+    if (!settings.liveBuild || liveBusyRef.current || framesRef.current.length < 2) {
       return;
     }
-    if (framesRef.current.length - lastLiveBuildFrameRef.current < LIVE_REBUILD_FRAME_STEP) {
+    const intervalMs = numericSetting(settings.buildIntervalSeconds, 10) * 1000;
+    const now = Date.now();
+    if (now < nextLiveBuildAtRef.current) {
       return;
     }
 
-    const snapshot = [...framesRef.current];
-    lastLiveBuildFrameRef.current = snapshot.length;
+    const elapsedSeconds = Math.max(1, (now - recordingStartedAtRef.current) / 1000);
+    const frameBudget = liveBuildFrameBudget(elapsedSeconds);
+    const snapshot = sampleRecentFrames(frameBudget);
+    nextLiveBuildAtRef.current = now + intervalMs;
     liveBusyRef.current = true;
     setLiveBusy(true);
-    setStatus(`Rebuilding from ${snapshot.length} frames`);
+    setStatus(`Rebuilding ${snapshot.length} of ${framesRef.current.length} frames`);
     reconstructFrames(snapshot)
       .catch((err) => {
         setError(err instanceof Error ? err.message : "Live reconstruction failed");
@@ -186,7 +243,6 @@ export function DemoApp() {
     try {
       setError(null);
       setScene(null);
-      lastLiveBuildFrameRef.current = 0;
       setStatus(cameraSource === "drone" ? "Connecting to drone" : "Requesting camera");
       if (cameraSource === "laptop") {
         await ensureCamera();
@@ -196,6 +252,10 @@ export function DemoApp() {
       resetFrames();
       setRecording(true);
       recordingRef.current = true;
+      recordingStartedAtRef.current = Date.now();
+      nextLiveBuildAtRef.current =
+        recordingStartedAtRef.current +
+        numericSetting(liveSettingsRef.current.buildIntervalSeconds, 10) * 1000;
       setStatus("Recording frames");
 
       timerRef.current = window.setInterval(async () => {
@@ -329,7 +389,7 @@ export function DemoApp() {
                   disabled={recording}
                   onClick={() => {
                     setCameraSource("laptop");
-                    setFlipZAxis(true);
+                    setFlipAxis("y");
                     setStatus("Camera idle");
                   }}
                 >
@@ -340,7 +400,7 @@ export function DemoApp() {
                   disabled={recording}
                   onClick={() => {
                     setCameraSource("drone");
-                    setFlipZAxis(false);
+                    setFlipAxis("none");
                     stopLaptopCamera();
                     setStatus("Drone camera idle");
                   }}
@@ -356,14 +416,18 @@ export function DemoApp() {
                 />
                 Live build
               </label>
-              <label className="check-row">
-                <input
-                  type="checkbox"
-                  checked={flipZAxis}
-                  onChange={(event) => setFlipZAxis(event.target.checked)}
-                />
-                Flip z axis
-              </label>
+              <div className="control-label">Flip axis</div>
+              <div className="segmented compact" aria-label="Point cloud flip axis">
+                {(["none", "x", "y", "z"] as FlipAxis[]).map((axis) => (
+                  <button
+                    key={axis}
+                    className={flipAxis === axis ? "selected" : ""}
+                    onClick={() => setFlipAxis(axis)}
+                  >
+                    {axis}
+                  </button>
+                ))}
+              </div>
               <label className="number-row">
                 <span>Recent frames</span>
                 <input
@@ -376,6 +440,41 @@ export function DemoApp() {
                   placeholder="0"
                 />
               </label>
+              <div className="settings-grid">
+                <label>
+                  <span>Build interval</span>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    inputMode="numeric"
+                    value={buildIntervalSeconds}
+                    onChange={(event) => setBuildIntervalSeconds(event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>Base frames</span>
+                  <input
+                    type="number"
+                    min="2"
+                    step="1"
+                    inputMode="numeric"
+                    value={baseBuildFrames}
+                    onChange={(event) => setBaseBuildFrames(event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>Max growth</span>
+                  <input
+                    type="number"
+                    min="1"
+                    step="0.25"
+                    inputMode="decimal"
+                    value={maxBuildGrowth}
+                    onChange={(event) => setMaxBuildGrowth(event.target.value)}
+                  />
+                </label>
+              </div>
             </div>
           </div>
 
@@ -402,7 +501,7 @@ export function DemoApp() {
       </section>
 
       <section className="viewer-panel">
-        <SceneViewer scene={scene} flipZAxis={flipZAxis} />
+        <SceneViewer scene={scene} flipAxis={flipAxis} />
       </section>
     </main>
   );
