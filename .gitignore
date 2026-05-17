@@ -133,6 +133,9 @@ dmypy.json
 ckpt/
 datasets
 logs/
+tmp/
+web-ui/node_modules/
+web-ui/.next/
 *.prof
 screen.yaml
 *.pt
